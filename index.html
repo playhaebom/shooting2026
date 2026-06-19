@@ -1,0 +1,594 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>네온 슈터 (Neon Shooter)</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        body {
+            margin: 0;
+            padding: 0;
+            overflow: hidden;
+            background-color: #050510; /* 아주 어두운 남색 배경 */
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            touch-action: none; /* 모바일에서 스크롤 방지 */
+        }
+        canvas {
+            display: block;
+            width: 100vw;
+            height: 100vh;
+        }
+        .neon-text {
+            color: #fff;
+            text-shadow:
+                0 0 5px #fff,
+                0 0 10px #fff,
+                0 0 20px #0ff,
+                0 0 40px #0ff,
+                0 0 80px #0ff;
+        }
+        .neon-text-pink {
+            color: #fff;
+            text-shadow:
+                0 0 5px #fff,
+                0 0 10px #fff,
+                0 0 20px #f0f,
+                0 0 40px #f0f,
+                0 0 80px #f0f;
+        }
+        .btn-neon {
+            transition: all 0.2s ease-in-out;
+            box-shadow: 0 0 10px currentColor, inset 0 0 10px currentColor;
+        }
+        .btn-neon:hover {
+            box-shadow: 0 0 20px currentColor, inset 0 0 20px currentColor;
+            transform: scale(1.05);
+        }
+    </style>
+</head>
+<body class="text-white select-none">
+
+    <!-- 게임 캔버스 -->
+    <canvas id="gameCanvas"></canvas>
+
+    <!-- UI 오버레이: 시작 화면 -->
+    <div id="startScreen" class="absolute inset-0 flex flex-col items-center justify-center bg-black bg-opacity-80 z-20 backdrop-blur-sm">
+        <h1 class="text-6xl md:text-8xl font-bold mb-4 neon-text">NEON SHOOTER</h1>
+        <p class="text-xl mb-12 text-gray-300 tracking-widest">10분의 화려한 휴식</p>
+        
+        <h2 class="text-2xl mb-6 font-semibold">난이도 선택</h2>
+        <div class="flex flex-col md:flex-row gap-4">
+            <button onclick="startGame('easy')" class="btn-neon text-green-400 border-2 border-green-400 px-8 py-3 rounded-full text-xl font-bold uppercase">쉬움 (Easy)</button>
+            <button onclick="startGame('normal')" class="btn-neon text-yellow-400 border-2 border-yellow-400 px-8 py-3 rounded-full text-xl font-bold uppercase">보통 (Normal)</button>
+            <button onclick="startGame('hard')" class="btn-neon text-red-500 border-2 border-red-500 px-8 py-3 rounded-full text-xl font-bold uppercase">어려움 (Hard)</button>
+        </div>
+        <p class="mt-8 text-gray-400 text-sm">조작: 마우스/터치 이동, 발사: 스페이스바 또는 화면 클릭</p>
+    </div>
+
+    <!-- UI 오버레이: 게임 HUD -->
+    <div id="hud" class="absolute top-0 left-0 w-full p-6 flex justify-between items-start pointer-events-none hidden z-10">
+        <div class="text-2xl md:text-3xl font-bold text-cyan-400" style="text-shadow: 0 0 10px #0ff;">점수: <span id="scoreEl">0</span></div>
+        <div class="text-xl md:text-2xl font-bold flex gap-2" id="livesEl">
+            <!-- 생명 아이콘이 여기에 표시됨 -->
+        </div>
+    </div>
+
+    <!-- UI 오버레이: 게임 오버 화면 -->
+    <div id="gameOverScreen" class="absolute inset-0 flex flex-col items-center justify-center bg-black bg-opacity-90 z-30 hidden backdrop-blur-md">
+        <h1 class="text-6xl md:text-8xl font-bold mb-6 neon-text-pink">GAME OVER</h1>
+        <p class="text-3xl mb-2">최종 점수</p>
+        <p id="finalScoreEl" class="text-5xl md:text-7xl font-bold text-cyan-400 mb-12" style="text-shadow: 0 0 20px #0ff;">0</p>
+        <button onclick="showMainMenu()" class="btn-neon text-white border-2 border-white px-10 py-4 rounded-full text-2xl font-bold tracking-wider hover:bg-white hover:text-black hover:shadow-[0_0_30px_#fff]">메인 메뉴로</button>
+    </div>
+
+    <script>
+        const canvas = document.getElementById('gameCanvas');
+        const ctx = canvas.getContext('2d');
+        
+        // UI 엘리먼트
+        const startScreen = document.getElementById('startScreen');
+        const gameOverScreen = document.getElementById('gameOverScreen');
+        const hud = document.getElementById('hud');
+        const scoreEl = document.getElementById('scoreEl');
+        const livesEl = document.getElementById('livesEl');
+        const finalScoreEl = document.getElementById('finalScoreEl');
+
+        // 캔버스 크기 설정
+        canvas.width = window.innerWidth;
+        canvas.height = window.innerHeight;
+
+        window.addEventListener('resize', () => {
+            canvas.width = window.innerWidth;
+            canvas.height = window.innerHeight;
+            if (player) {
+                player.y = canvas.height - 50;
+            }
+        });
+
+        // 게임 상태 변수
+        let animationId;
+        let isPlaying = false;
+        let score = 0;
+        let lives = 3;
+        let difficultySettings = {};
+        let frames = 0;
+        
+        // 오디오 컨텍스트 (효과음용)
+        let audioCtx;
+
+        // 게임 객체 배열
+        let player;
+        let projectiles = [];
+        let enemies = [];
+        let particles = [];
+        let stars = [];
+
+        // 마우스/터치 위치 (초기 위치를 하단 중앙으로 설정)
+        const mouse = { x: canvas.width / 2, y: canvas.height - 80 };
+        let isShooting = false; // 발사 상태 변수 추가
+
+        // 이벤트 리스너 (입력) - X축과 Y축 모두 추적 및 발사 키 추가
+        window.addEventListener('mousemove', (e) => { 
+            mouse.x = e.clientX; 
+            mouse.y = e.clientY;
+        });
+        window.addEventListener('mousedown', () => { isShooting = true; });
+        window.addEventListener('mouseup', () => { isShooting = false; });
+
+        window.addEventListener('touchmove', (e) => { 
+            mouse.x = e.touches[0].clientX; 
+            mouse.y = e.touches[0].clientY;
+        });
+        window.addEventListener('touchstart', (e) => { 
+            mouse.x = e.touches[0].clientX; 
+            mouse.y = e.touches[0].clientY;
+            isShooting = true;
+        });
+        window.addEventListener('touchend', () => { isShooting = false; });
+
+        // 스페이스바 입력 감지
+        window.addEventListener('keydown', (e) => {
+            if (e.code === 'Space') isShooting = true;
+        });
+        window.addEventListener('keyup', (e) => {
+            if (e.code === 'Space') isShooting = false;
+        });
+
+        // 설정 (난이도)
+        const difficulties = {
+            easy:   { spawnRate: 90, enemySpeedMax: 3, lives: 5, color: '#4ade80' },
+            normal: { spawnRate: 60, enemySpeedMax: 5, lives: 3, color: '#facc15' },
+            hard:   { spawnRate: 30, enemySpeedMax: 8, lives: 1, color: '#ef4444' }
+        };
+
+        // 컬러 팔레트 (적용)
+        const enemyColors = ['#f0f', '#0ff', '#ff0', '#0f0', '#f00'];
+
+        // 배경 별 클래스 (시각 효과)
+        class Star {
+            constructor() {
+                this.x = Math.random() * canvas.width;
+                this.y = Math.random() * canvas.height;
+                this.size = Math.random() * 2;
+                this.speed = (Math.random() * 2) + 0.5;
+                this.alpha = Math.random();
+            }
+            draw() {
+                ctx.fillStyle = `rgba(255, 255, 255, ${this.alpha})`;
+                ctx.beginPath();
+                ctx.arc(this.x, this.y, this.size, 0, Math.PI * 2);
+                ctx.fill();
+            }
+            update() {
+                this.y += this.speed;
+                if (this.y > canvas.height) {
+                    this.y = 0;
+                    this.x = Math.random() * canvas.width;
+                }
+                this.draw();
+            }
+        }
+
+        // 플레이어 클래스
+        class Player {
+            constructor(x, y, radius, color) {
+                this.x = x;
+                this.y = y;
+                this.radius = radius;
+                this.color = color;
+                this.shootTimer = 0;
+            }
+            draw() {
+                ctx.save();
+                ctx.shadowBlur = 20;
+                ctx.shadowColor = this.color;
+                ctx.fillStyle = this.color;
+                ctx.beginPath();
+                // 삼각형 그리기
+                ctx.moveTo(this.x, this.y - this.radius);
+                ctx.lineTo(this.x - this.radius, this.y + this.radius);
+                ctx.lineTo(this.x + this.radius, this.y + this.radius);
+                ctx.closePath();
+                ctx.fill();
+                ctx.restore();
+            }
+            update() {
+                // 부드러운 마우스/터치 추적 (보간) - X, Y축 모두 이동 및 속도 증가 (0.15 -> 0.25)
+                this.x += (mouse.x - this.x) * 0.25;
+                this.y += (mouse.y - this.y) * 0.25;
+                
+                // 화면 밖으로 나가지 않게 방지
+                if (this.x < this.radius) this.x = this.radius;
+                if (this.x > canvas.width - this.radius) this.x = canvas.width - this.radius;
+                if (this.y < this.radius) this.y = this.radius;
+                if (this.y > canvas.height - this.radius) this.y = canvas.height - this.radius;
+
+                // 수동 발사 로직 (스페이스바 또는 클릭 시)
+                if (isShooting) {
+                    this.shootTimer++;
+                    if (this.shootTimer % 10 === 0) { // 발사 속도
+                        this.shoot();
+                    }
+                } else {
+                    this.shootTimer = 9; // 누르자마자 즉시 발사되도록 대기 상태 설정
+                }
+                
+                this.draw();
+            }
+            shoot() {
+                playShootSound(); // 발사 소리 재생
+                projectiles.push(new Projectile(this.x, this.y - this.radius, 4, '#0ff', { x: 0, y: -15 }));
+                // 더블 샷 (선택적 시각 효과)
+                projectiles.push(new Projectile(this.x - 10, this.y, 2, '#fff', { x: 0, y: -12 }));
+                projectiles.push(new Projectile(this.x + 10, this.y, 2, '#fff', { x: 0, y: -12 }));
+            }
+        }
+
+        // 총알 클래스
+        class Projectile {
+            constructor(x, y, radius, color, velocity) {
+                this.x = x;
+                this.y = y;
+                this.radius = radius;
+                this.color = color;
+                this.velocity = velocity;
+            }
+            draw() {
+                ctx.save();
+                ctx.shadowBlur = 10;
+                ctx.shadowColor = this.color;
+                ctx.fillStyle = this.color;
+                ctx.beginPath();
+                ctx.arc(this.x, this.y, this.radius, 0, Math.PI * 2);
+                ctx.fill();
+                ctx.restore();
+            }
+            update() {
+                this.x += this.velocity.x;
+                this.y += this.velocity.y;
+                this.draw();
+            }
+        }
+
+        // 적 클래스
+        class Enemy {
+            constructor(x, y, radius, color, velocity) {
+                this.x = x;
+                this.y = y;
+                this.radius = radius;
+                this.color = color;
+                this.velocity = velocity;
+                this.type = Math.random() > 0.5 ? 'circle' : 'square'; // 모양 무작위
+            }
+            draw() {
+                ctx.save();
+                ctx.shadowBlur = 15;
+                ctx.shadowColor = this.color;
+                ctx.strokeStyle = this.color;
+                ctx.lineWidth = 3;
+                
+                // 안쪽이 비어있는 네온 스타일
+                ctx.beginPath();
+                if (this.type === 'circle') {
+                    ctx.arc(this.x, this.y, this.radius, 0, Math.PI * 2);
+                } else {
+                    ctx.rect(this.x - this.radius, this.y - this.radius, this.radius * 2, this.radius * 2);
+                }
+                ctx.stroke();
+                ctx.restore();
+            }
+            update() {
+                this.x += this.velocity.x;
+                this.y += this.velocity.y;
+                this.draw();
+            }
+        }
+
+        // 폭발 파티클 클래스 (화려한 그래픽의 핵심)
+        const friction = 0.98;
+        class Particle {
+            constructor(x, y, radius, color, velocity) {
+                this.x = x;
+                this.y = y;
+                this.radius = radius;
+                this.color = color;
+                this.velocity = velocity;
+                this.alpha = 1;
+            }
+            draw() {
+                ctx.save();
+                ctx.globalAlpha = this.alpha;
+                ctx.shadowBlur = 10;
+                ctx.shadowColor = this.color;
+                ctx.fillStyle = this.color;
+                ctx.beginPath();
+                ctx.arc(this.x, this.y, this.radius, 0, Math.PI * 2);
+                ctx.fill();
+                ctx.restore();
+            }
+            update() {
+                this.velocity.x *= friction;
+                this.velocity.y *= friction;
+                this.x += this.velocity.x;
+                this.y += this.velocity.y;
+                this.alpha -= 0.015; // 서서히 사라짐
+                this.draw();
+            }
+        }
+
+        // 효과음 생성 함수 (총 발사 - 짧고 높은 소리)
+        function playShootSound() {
+            if (!audioCtx) return;
+            const osc = audioCtx.createOscillator();
+            const gainNode = audioCtx.createGain();
+            
+            osc.type = 'square'; // 레트로한 사각파
+            osc.connect(gainNode);
+            gainNode.connect(audioCtx.destination);
+            
+            // 주파수가 빠르게 떨어지는 '피융' 소리
+            osc.frequency.setValueAtTime(800, audioCtx.currentTime);
+            osc.frequency.exponentialRampToValueAtTime(100, audioCtx.currentTime + 0.1);
+            
+            // 볼륨 감쇠
+            gainNode.gain.setValueAtTime(0.05, audioCtx.currentTime);
+            gainNode.gain.exponentialRampToValueAtTime(0.001, audioCtx.currentTime + 0.1);
+            
+            osc.start();
+            osc.stop(audioCtx.currentTime + 0.1);
+        }
+
+        // 효과음 생성 함수 (폭발 - 낮고 퍼지는 소리)
+        function playExplosionSound() {
+            if (!audioCtx) return;
+            const osc = audioCtx.createOscillator();
+            const gainNode = audioCtx.createGain();
+            
+            osc.type = 'sawtooth'; // 거친 톱니파
+            osc.connect(gainNode);
+            gainNode.connect(audioCtx.destination);
+            
+            // 낮게 떨어지는 폭발음
+            osc.frequency.setValueAtTime(100, audioCtx.currentTime);
+            osc.frequency.exponentialRampToValueAtTime(10, audioCtx.currentTime + 0.2);
+            
+            // 볼륨 감쇠
+            gainNode.gain.setValueAtTime(0.1, audioCtx.currentTime);
+            gainNode.gain.exponentialRampToValueAtTime(0.001, audioCtx.currentTime + 0.2);
+            
+            osc.start();
+            osc.stop(audioCtx.currentTime + 0.2);
+        }
+
+        // UI 업데이트 함수 (수정 완료: 괄호 및 로직 분리 복구)
+        function updateHUD() {
+            scoreEl.innerText = score;
+            livesEl.innerHTML = '';
+            for (let i = 0; i < lives; i++) {
+                livesEl.innerHTML += `<span style="color: ${difficultySettings.color}; text-shadow: 0 0 10px ${difficultySettings.color};">♥</span>`;
+            }
+        }
+
+        // 게임 시작 초기화
+        function init(difficulty) {
+            difficultySettings = difficulties[difficulty];
+            player = new Player(canvas.width / 2, canvas.height - 80, 15, '#0ff');
+            projectiles = [];
+            enemies = [];
+            particles = [];
+            stars = [];
+            score = 0;
+            lives = difficultySettings.lives;
+            frames = 0;
+
+            // 배경 별 생성
+            for(let i=0; i<100; i++) {
+                stars.push(new Star());
+            }
+
+            updateHUD();
+        }
+
+        // 적 스폰 로직
+        function spawnEnemies() {
+            if (frames % difficultySettings.spawnRate === 0) {
+                const radius = Math.random() * 20 + 10;
+                const x = Math.random() * (canvas.width - radius * 2) + radius;
+                const y = -radius;
+                const color = enemyColors[Math.floor(Math.random() * enemyColors.length)];
+                
+                // 난이도에 따른 속도 증가 + 점수에 따른 추가 속도 (점점 어려워짐)
+                const speedMult = 1 + (score / 5000);
+                const velocity = {
+                    x: (Math.random() - 0.5) * 2, // 약간의 좌우 움직임
+                    y: (Math.random() * difficultySettings.enemySpeedMax + 1) * speedMult
+                };
+                enemies.push(new Enemy(x, y, radius, color, velocity));
+            }
+        }
+
+        // 폭발 이펙트 생성
+        function createParticles(x, y, color, amount) {
+            for (let i = 0; i < amount; i++) {
+                particles.push(new Particle(
+                    x, y, Math.random() * 3 + 1, color, 
+                    {
+                        x: (Math.random() - 0.5) * (Math.random() * 8),
+                        y: (Math.random() - 0.5) * (Math.random() * 8)
+                    }
+                ));
+            }
+        }
+
+        // 메인 게임 루프
+        function animate() {
+            if (!isPlaying) return;
+            animationId = requestAnimationFrame(animate);
+
+            // 잔상 효과 (화려한 그래픽) - 완전히 지우지 않고 반투명 검정색 덧칠
+            ctx.fillStyle = 'rgba(5, 5, 16, 0.3)';
+            ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+            // 블렌딩 모드를 밝게 설정하여 네온 효과 극대화
+            ctx.globalCompositeOperation = 'lighter';
+
+            // 배경 별 업데이트
+            stars.forEach(star => star.update());
+
+            player.update();
+            spawnEnemies();
+
+            // 파티클 업데이트 및 제거
+            for (let i = particles.length - 1; i >= 0; i--) {
+                const p = particles[i];
+                if (p.alpha <= 0) {
+                    particles.splice(i, 1);
+                } else {
+                    p.update();
+                }
+            }
+
+            // 총알 업데이트 및 제거
+            for (let i = projectiles.length - 1; i >= 0; i--) {
+                const projectile = projectiles[i];
+                projectile.update();
+
+                // 화면 밖으로 나간 총알 제거
+                if (projectile.y + projectile.radius < 0) {
+                    projectiles.splice(i, 1);
+                }
+            }
+
+            // 적 업데이트, 제거 및 충돌 체크
+            for (let i = enemies.length - 1; i >= 0; i--) {
+                const enemy = enemies[i];
+                enemy.update();
+
+                // 적이 화면 아래로 지나갔을 때 (놓침)
+                if (enemy.y - enemy.radius > canvas.height) {
+                    enemies.splice(i, 1);
+                    continue;
+                }
+
+                // 1. 플레이어와 적 충돌 체크
+                const distPlayer = Math.hypot(player.x - enemy.x, player.y - enemy.y);
+                if (distPlayer - enemy.radius - player.radius < 1) {
+                    // 충돌 발생
+                    lives--;
+                    createParticles(player.x, player.y, player.color, 20); // 플레이어 피격 이펙트
+                    playExplosionSound(); // 피격/폭발음 재생
+                    enemies.splice(i, 1);
+                    updateHUD();
+
+                    if (lives <= 0) {
+                        endGame();
+                        return; // 루프 종료
+                    }
+                    continue;
+                }
+
+                // 2. 총알과 적 충돌 체크
+                for (let j = projectiles.length - 1; j >= 0; j--) {
+                    const projectile = projectiles[j];
+                    const dist = Math.hypot(projectile.x - enemy.x, projectile.y - enemy.y);
+
+                    // 충돌 발생
+                    if (dist - enemy.radius - projectile.radius < 1) {
+                        // 폭발 파티클 생성
+                        createParticles(enemy.x, enemy.y, enemy.color, enemy.radius);
+                        playExplosionSound(); // 적 폭발음 재생
+                        
+                        // 점수 증가 (적의 크기가 작을수록 높은 점수)
+                        score += Math.floor(50 - enemy.radius);
+                        updateHUD();
+
+                        // 제거
+                        setTimeout(() => {
+                            enemies.splice(i, 1);
+                            projectiles.splice(j, 1);
+                        }, 0);
+                        break; // 한 총알로 여러 적 타격 방지
+                    }
+                }
+            }
+
+            // 렌더링 모드 원복
+            ctx.globalCompositeOperation = 'source-over';
+            frames++;
+        }
+
+        // 게임 제어 함수
+        window.startGame = function(difficulty) {
+            // 브라우저 정책상 오디오 컨텍스트는 사용자 입력 이벤트 안에서 초기화/재개되어야 함
+            if (!audioCtx) {
+                audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+            }
+            if (audioCtx.state === 'suspended') {
+                audioCtx.resume();
+            }
+
+            startScreen.classList.add('hidden');
+            gameOverScreen.classList.add('hidden');
+            hud.classList.remove('hidden');
+            
+            init(difficulty);
+            isPlaying = true;
+            animate();
+        };
+
+        function endGame() {
+            isPlaying = false;
+            cancelAnimationFrame(animationId);
+            
+            hud.classList.add('hidden');
+            gameOverScreen.classList.remove('hidden');
+            finalScoreEl.innerText = score;
+            
+            // 게임 오버 폭발 연출
+            createParticles(player.x, player.y, '#fff', 50);
+            
+            // 화면 멈춤 효과 전에 마지막 잔상을 그려줌
+            setTimeout(() => {
+                 particles.forEach(p => p.update());
+            }, 50);
+        }
+
+        window.showMainMenu = function() {
+            gameOverScreen.classList.add('hidden');
+            startScreen.classList.remove('hidden');
+            // 배경만 그려주기 위해 살짝 클리어
+            ctx.fillStyle = '#050510';
+            ctx.fillRect(0, 0, canvas.width, canvas.height);
+        };
+
+        // 초기 화면 세팅 (별만 배경에 그리기)
+        ctx.fillStyle = '#050510';
+        ctx.fillRect(0, 0, canvas.width, canvas.height);
+        for(let i=0; i<100; i++) {
+            new Star().draw();
+        }
+
+    </script>
+</body>
+</html>
